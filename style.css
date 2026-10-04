@@ -101,3 +101,10 @@ body.panel-closed #panel { transform: translateX(calc(-100% - 24px)); opacity: 0
 #panelOpen { position: absolute; top: 12px; left: 12px; z-index: 3; padding: 7px 12px; border-radius: 9px; background: var(--panel); backdrop-filter: blur(8px); font-weight: 600; }
 #panelOpen[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) { #panel { transition: none; } }
+/* thin, dark scrollbars that stay out of the way */
+#panel, #results, #card { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.10) transparent; }
+#panel:hover, #results:hover, #card:hover { scrollbar-color: rgba(255,255,255,0.22) transparent; }
+#panel::-webkit-scrollbar, #results::-webkit-scrollbar, #card::-webkit-scrollbar { width: 6px; }
+#panel::-webkit-scrollbar-track, #results::-webkit-scrollbar-track, #card::-webkit-scrollbar-track { background: transparent; }
+#panel::-webkit-scrollbar-thumb, #results::-webkit-scrollbar-thumb, #card::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 3px; }
+#panel:hover::-webkit-scrollbar-thumb, #results:hover::-webkit-scrollbar-thumb, #card:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); }

@@ -13,14 +13,14 @@ const PROFILE = new URLSearchParams(location.search).get('profile') || 'm2';
 const BASE = `data/${PROFILE}/`;
 const CAT_RGB = [[91, 192, 235], [253, 231, 76], [155, 197, 61], [229, 89, 52], [250, 121, 33],
   [193, 123, 224], [242, 95, 156], [61, 218, 180], [150, 150, 150]];
-// map labels, styled like an atlas: fields in spaced capitals, subtopics in sentence case
-const LABEL_FONT = '"Barlow Semi Condensed", "Barlow", "Arial Narrow", system-ui, sans-serif';
+// map labels: a clean, legible sans in sentence case; size and weight step down with depth
+const LABEL_FONT = '"Manrope", "Inter", system-ui, sans-serif';
 const LABEL_STYLE = [
-  {size: 21, weight: 600, caps: true, color: [255, 255, 255, 240]},
-  {size: 17, weight: 600, color: [238, 241, 246, 235]},
-  {size: 15, weight: 500, color: [228, 233, 240, 230]},
-  {size: 13.5, weight: 500, color: [222, 228, 236, 225]},
-  {size: 13, weight: 500, color: [222, 228, 236, 220]},
+  {size: 26, weight: 700, color: [255, 255, 255, 245]},
+  {size: 19, weight: 700, color: [245, 247, 250, 240]},
+  {size: 16, weight: 600, color: [236, 240, 245, 235]},
+  {size: 14.5, weight: 600, color: [230, 235, 242, 230]},
+  {size: 13.5, weight: 600, color: [226, 232, 240, 225]},
 ];
 const labelStyle = (lv) => LABEL_STYLE[Math.min(lv, LABEL_STYLE.length - 1)];
 const MAX_LINES = 300;
@@ -52,7 +52,7 @@ async function main() {
   S.meta = meta; S.n = meta.count;
   S.cols = readColumns(buf, meta.columns, S.n);
   // label glyphs are rasterized once per font, so give the web font a moment to arrive first
-  const fonts = [`600 21px ${LABEL_FONT}`, `500 15px ${LABEL_FONT}`].map((f) => document.fonts.load(f));
+  const fonts = [`700 26px ${LABEL_FONT}`, `600 15px ${LABEL_FONT}`].map((f) => document.fonts.load(f));
   await Promise.race([Promise.all(fonts), new Promise((r) => setTimeout(r, 2500))]);
   document.fonts.ready.then(() => { S.fontKey++; if (S.deck) render(); });
   decodeColumns();
@@ -311,7 +311,7 @@ function render() {
       getPosition: (d) => [d.x, d.y], getText: (d) => d.text,
       getSize: labelStyle(lv).size, sizeUnits: 'pixels', getColor: labelStyle(lv).color,
       fontFamily: LABEL_FONT, fontWeight: labelStyle(lv).weight, characterSet: 'auto',
-      fontSettings: {sdf: true, fontSize: 72, buffer: 8, radius: 12}, outlineWidth: 4, outlineColor: [6, 8, 12, 235],
+      fontSettings: {sdf: true, fontSize: 72, buffer: 8, radius: 12}, outlineWidth: 5, outlineColor: [5, 7, 11, 225],
       lineHeight: 1.12,
     }),
   ];
@@ -330,7 +330,7 @@ function wrapLabel(name, lv) {
     const text = st.caps ? name.toUpperCase() : name;
     const spaced = (s) => (st.caps ? [...s].join('\u200A') : s);
     measureCtx.font = `${st.weight} ${st.size}px ${LABEL_FONT}`;
-    const maxW = st.size * (st.caps ? 11 : 12.5), lines = [];
+    const maxW = st.size * 11, lines = [];
     let cur = '';
     for (const w of text.split(/\s+/)) {
       const next = cur ? cur + ' ' + w : w;
@@ -338,7 +338,7 @@ function wrapLabel(name, lv) {
     }
     if (cur) lines.push(cur);
     const out = lines.map(spaced);
-    const width = Math.max(...out.map((l) => measureCtx.measureText(l).width)), height = out.length * st.size * 1.25;
+    const width = Math.max(...out.map((l) => measureCtx.measureText(l).width)), height = out.length * st.size * 1.22;
     wrapCache.set(key, {text: out.join('\n'), width, height});
   }
   return wrapCache.get(key);
