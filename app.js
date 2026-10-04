@@ -1,6 +1,6 @@
 /* ML Paper Atlas — static deck.gl app (no build step, loaded from CDN).
  * Data: data/<profile>/{meta.json, points.bin, aux.bin, terrain.png, cards/, edges/, search/, ids/}
- * URL params: ?profile=m1|m2, ?paper=<arXiv id>, ?q=<query>
+ * URL params: ?paper=<arXiv id>, ?q=<query>[&focus=1], ?top=<pct>, ?hot=<pct> (?profile= picks another exported map)
  *
  * Performance notes: layer data objects and extensions are created once and reused, so a
  * view change only updates uniforms (re-creating them per frame re-uploads 600k+ points).
