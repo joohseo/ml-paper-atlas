@@ -81,3 +81,4 @@ button.link:hover { color: var(--text); }
 .seg button.on { background: rgba(255,255,255,0.12); color: var(--text); }
 #legend.topics { grid-template-columns: 1fr; font-size: 13px; }
 #legend.topics span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+input.range1 { width: 100%; margin: 4px 0 12px; accent-color: var(--accent); }

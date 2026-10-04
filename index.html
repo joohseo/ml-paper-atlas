@@ -41,6 +41,21 @@
 
   <section>
     <div class="row between">
+      <h2>Most cited</h2>
+      <span id="citeText" class="mono"></span>
+    </div>
+    <input id="citeTop" class="range1" type="range" aria-label="Show only the most cited papers">
+    <div class="row between">
+      <h2>Hot (age-adjusted)</h2>
+      <span id="hotText" class="mono"></span>
+    </div>
+    <input id="hotTop" class="range1" type="range" aria-label="Show only papers most cited for their age">
+    <p class="hint">Hot ranks each paper against papers published in the same quarter, so new papers are not penalized for having had less time to be cited.</p>
+    <p class="hint" id="rankNote"></p>
+  </section>
+
+  <section>
+    <div class="row between">
       <h2>Venue</h2>
       <span class="row gap">
         <button class="link" id="vAll" type="button">All</button>

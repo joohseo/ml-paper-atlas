@@ -15,13 +15,14 @@ const CAT_RGB = [[91, 192, 235], [253, 231, 76], [155, 197, 61], [229, 89, 52], 
   [193, 123, 224], [242, 95, 156], [61, 218, 180], [150, 150, 150]];
 const LABEL_SIZE = [28, 21, 17, 15.5, 14.5];
 const MAX_LINES = 300;
-const FILTER = new DataFilterExtension({filterSize: 1, categorySize: 1});
+const FILTER = new DataFilterExtension({filterSize: 3, categorySize: 1});  // [year, citation pct, age-adjusted pct]
+const PCT_STEPS = [100, 50, 25, 10, 5, 2, 1, 0.5, 0.1];  // slider positions: show the top N% of papers
 const ADDITIVE = {depthCompare: 'always', blendColorOperation: 'add', blendColorSrcFactor: 'src-alpha', blendColorDstFactor: 'one'};
 const TYPES = {float32: Float32Array, uint8: Uint8Array, uint16: Uint16Array};
 const $ = (id) => document.getElementById(id);
 
 const S = {
-  meta: null, n: 0, cols: {}, aux: null, viewState: null, z0: 0, colorMode: 'topic',
+  meta: null, n: 0, cols: {}, aux: null, viewState: null, z0: 0, colorMode: 'topic', citeTop: 100, hotTop: 100,
   y0: 0, y1: 0, soft: null, venues: new Set(), venueList: [],
   selected: null, edgeLines: [], playing: false,
   cards: new Map(), edgeShards: new Map(), searchShards: new Map(), idShards: new Map(),
@@ -69,6 +70,41 @@ function decodeColumns() {
   S.tMin = year.reduce((a, b) => (b < a ? b : a), Infinity); S.tMax = year.reduce((a, b) => (b > a ? b : a), 0);
 }
 
+/* Percentiles (0–100 = share of papers with strictly fewer citations; -1 = citations unknown).
+ * citePct compares against every paper; hotPct only against papers published in the same quarter,
+ * so a recent paper is ranked against papers that had the same time to collect citations. */
+function computePercentiles() {
+  const {cites, year} = S.cols, n = S.n;
+  const pct = (idx) => {
+    const v = Float32Array.from(idx, (i) => cites[i]).sort();
+    const out = new Map();
+    for (const i of idx) {
+      let lo = 0, hi = v.length;  // lower bound: number of values < cites[i]
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (v[mid] < cites[i]) lo = mid + 1; else hi = mid; }
+      out.set(i, v.length > 1 ? (100 * lo) / v.length : 100);
+    }
+    return {out, sorted: v};
+  };
+  const known = [];
+  const cohorts = new Map();
+  for (let i = 0; i < n; i++) {
+    if (cites[i] < 0) continue;
+    known.push(i);
+    const q = Math.floor(year[i] * 4);
+    (cohorts.get(q) || cohorts.set(q, []).get(q)).push(i);
+  }
+  S.citePct = new Float32Array(n).fill(-1); S.hotPct = new Float32Array(n).fill(-1);
+  const all = pct(known);
+  for (const [i, p] of all.out) S.citePct[i] = p;
+  S.citeSorted = all.sorted;
+  for (const idx of cohorts.values()) for (const [i, p] of pct(idx).out) S.hotPct[i] = p;
+}
+
+function citeThreshold(top) {  // smallest citation count inside the top `top` percent
+  const v = S.citeSorted;
+  return v[Math.min(v.length - 1, Math.floor(v.length * (1 - top / 100)))];
+}
+
 /* Draw order: big circles first so small points stay visible on top of them.
  * Attributes are stored in that order; S.perm maps a drawn index back to the paper's row. */
 function buildLayerData() {
@@ -82,6 +118,9 @@ function buildLayerData() {
   const perm = new Uint32Array(n);
   for (let i = 0; i < n; i++) perm[counts[key(i)]++] = i;
   S.perm = perm;
+  computePercentiles();
+  S.fv = new Float32Array(n * 3);  // filter values in draw order
+  for (let k = 0; k < n; k++) { const i = perm[k]; S.fv[3 * k] = year[i]; S.fv[3 * k + 1] = S.citePct[i]; S.fv[3 * k + 2] = S.hotPct[i]; }
 
   const pos = new Float32Array(n * 2), rad = new Float32Array(n), vf = new Float32Array(n), yf = new Float32Array(n);
   const lw = new Float32Array(n);
@@ -101,19 +140,19 @@ function buildLayerData() {
   S.pointsData = {length: n, attributes: {
     getPosition: {value: pos, size: 2}, getRadius: {value: rad, size: 1},
     getFillColor: {value: S.colorBuf, size: 4}, getLineColor: {value: S.lineBuf, size: 4}, getLineWidth: {value: lw, size: 1},
-    getFilterValue: {value: yf, size: 1}, getFilterCategory: {value: vf, size: 1}}};
+    getFilterValue: {value: S.fv, size: 3}, getFilterCategory: {value: vf, size: 1}}};
 
   // glow for papers from the last 30 days
   const recent = [];
   for (let k = 0; k < n; k++) if (tMax - yf[k] <= 30 / 366) recent.push(k);
-  const g = recent.length, gp = new Float32Array(g * 2), gr = new Float32Array(g), gt = new Float32Array(g), gv = new Float32Array(g);
+  const g = recent.length, gp = new Float32Array(g * 2), gr = new Float32Array(g), gt = new Float32Array(g * 3), gv = new Float32Array(g);
   S.glowSrc = Uint32Array.from(recent);
-  recent.forEach((k, j) => { gp[2 * j] = pos[2 * k]; gp[2 * j + 1] = pos[2 * k + 1]; gr[j] = rad[k] * 3.2; gt[j] = yf[k]; gv[j] = vf[k]; });
+  recent.forEach((k, j) => { gp[2 * j] = pos[2 * k]; gp[2 * j + 1] = pos[2 * k + 1]; gr[j] = rad[k] * 3.2; gt.set(S.fv.subarray(3 * k, 3 * k + 3), 3 * j); gv[j] = vf[k]; });
   S.glowColor = new Uint8Array(g * 4);
   fillGlowColors();
   S.glowData = {length: g, attributes: {
     getPosition: {value: gp, size: 2}, getFillColor: {value: S.glowColor, size: 4}, getRadius: {value: gr, size: 1},
-    getFilterValue: {value: gt, size: 1}, getFilterCategory: {value: gv, size: 1}}};
+    getFilterValue: {value: gt, size: 3}, getFilterCategory: {value: gv, size: 1}}};
 }
 
 /* point colors: by top-level topic (default) or by arXiv primary category; brightness = recency */
@@ -204,10 +243,11 @@ function currentLevel() {
 function render() {
   const dz = S.viewState.zoom - S.z0;
   const radiusScale = Math.pow(2, -0.6 * Math.max(0, dz));  // points grow gently when zooming in
-  const range = [S.y0, S.soft ?? S.y1 + 1];
+  const yr = [S.y0, S.soft ?? S.y1 + 1];
+  const cr = [S.citeTop >= 100 ? -2 : 100 - S.citeTop, 101], hr = [S.hotTop >= 100 ? -2 : 100 - S.hotTop, 101];
   const filter = {
-    extensions: [FILTER], filterRange: range, filterCategories: S.venueList,
-    filterSoftRange: S.soft != null ? [S.y0, S.soft - 0.6] : range,
+    extensions: [FILTER], filterRange: [yr, cr, hr], filterCategories: S.venueList,
+    filterSoftRange: [S.soft != null ? [S.y0, S.soft - 0.6] : yr, cr, hr],
   };
   const lv = currentLevel();
   const layers = [
@@ -371,7 +411,7 @@ async function select(i) {
     <dl>
       <dt>Date</dt><dd>${c.date}</dd>
       <dt>Venue</dt><dd>${esc(m.venues[S.cols.venue[i]])}</dd>
-      <dt>Citations</dt><dd>${c.cites == null ? 'not yet known' : c.cites.toLocaleString('en-US')}</dd>
+      <dt>Citations</dt><dd>${c.cites == null ? 'not yet known' : c.cites.toLocaleString('en-US') + ` <small>(top ${topText(S.citePct[i])} overall · top ${topText(S.hotPct[i])} for its age)</small>`}</dd>
       <dt>Category</dt><dd>${m.categories[S.cols.cat[i]]}</dd>
       <dt>Links</dt><dd><span style="color:#8cbeff">${nb.out.length} references</span> · <span style="color:#ffd27a">${nb.in.length} cited by</span>
         <small>(within this map${lines.length > shown.length ? `; showing the ${shown.length} most-cited` : ''})</small></dd>
@@ -470,6 +510,25 @@ function initControls() {
   $('play').onclick = () => (S.playing ? stop() : play(yMax));
   updateYearText();
 
+  // citation and age-adjusted ("hot") sliders: positions map to PCT_STEPS
+  const known = S.citeSorted.length;
+  for (const [id, key, text] of [['citeTop', 'citeTop', 'citeText'], ['hotTop', 'hotTop', 'hotText']]) {
+    const el = $(id);
+    el.min = 0; el.max = PCT_STEPS.length - 1; el.step = 1;
+    const want = parseFloat(new URLSearchParams(location.search).get(key === 'citeTop' ? 'top' : 'hot'));
+    el.value = Number.isFinite(want) ? PCT_STEPS.reduce((b, s, j) => (Math.abs(s - want) < Math.abs(PCT_STEPS[b] - want) ? j : b), 0) : 0;
+    el.oninput = () => {
+      S[key] = PCT_STEPS[+el.value];
+      const top = S[key];
+      if (top >= 100) $(text).textContent = 'All papers';
+      else if (key === 'citeTop') $(text).textContent = `Top ${top}% · ≥ ${Math.round(citeThreshold(top)).toLocaleString('en-US')} citations`;
+      else $(text).textContent = `Top ${top}% for their age`;
+      render();
+    };
+    el.oninput();
+  }
+  $('rankNote').textContent = known < S.n ? `Ranks use the ${((100 * known) / S.n).toFixed(0)}% of papers with citation data; filtering hides the rest.` : '';
+
   // venues arrive ordered: named venues by paper count, then Workshop / Other venue / Preprint only / Not checked yet
   const order = m.venues.map((v, i) => i);
   const box = $('venues');
@@ -537,6 +596,8 @@ function stop() {
   S.playing = false; S.soft = null; $('play').textContent = '▶ Play';
   updateYearText(); render();
 }
+
+function topText(p) { const t = 100 - p; return t < 1 ? t.toFixed(1) + '%' : Math.round(t) + '%'; }
 
 function compact(n) { return n >= 10000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + 'k' : n.toLocaleString('en-US'); }
 
