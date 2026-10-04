@@ -108,3 +108,4 @@ body.panel-closed #panel { transform: translateX(calc(-100% - 24px)); opacity: 0
 #panel::-webkit-scrollbar-track, #results::-webkit-scrollbar-track, #card::-webkit-scrollbar-track { background: transparent; }
 #panel::-webkit-scrollbar-thumb, #results::-webkit-scrollbar-thumb, #card::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 3px; }
 #panel:hover::-webkit-scrollbar-thumb, #results:hover::-webkit-scrollbar-thumb, #card:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); }
+#panel footer.credits p { margin: 0 0 6px; }

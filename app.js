@@ -721,6 +721,11 @@ function initControls() {
   $('citeNote').textContent = m.citations_ready < 0.99
     ? `Citation counts are ${(m.citations_ready * 100).toFixed(0)}% loaded (papers without data are drawn at minimum size).` : '';
   $('q').oninput = onSearch;
+  const lastDay = new Date(Date.UTC(1990, 0, 1) + m.t_range_days[1] * 864e5).toISOString().slice(0, 10);
+  $('dataAsOf').textContent = `through ${lastDay}`;
+  $('topicNote').textContent = m.labels.filter((l) => l.l === 0).length === 13 && PROFILE === 'm2'
+    ? 'Topics: HDBSCAN clusters grouped into 13 research fields.'
+    : 'Topics: HDBSCAN clusters grouped by similarity.';
   const setPanel = (open) => {
     document.body.classList.toggle('panel-closed', !open);
     $('panelOpen').hidden = open;
