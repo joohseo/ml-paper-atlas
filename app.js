@@ -1,4 +1,4 @@
-/* AI Paper Map — static deck.gl app (no build step, loaded from CDN).
+/* ML Paper Atlas — static deck.gl app (no build step, loaded from CDN).
  * Data: data/<profile>/{meta.json, points.bin, aux.bin, terrain.png, cards/, edges/, search/, ids/}
  * URL params: ?profile=m1|m2, ?paper=<arXiv id>, ?q=<query>
  *
@@ -403,15 +403,26 @@ function initControls() {
   $('play').onclick = () => (S.playing ? stop() : play(yMax));
   updateYearText();
 
-  // venues: "arXiv only" first, then by paper count
-  const order = m.venues.map((v, i) => i).sort((a, b) => (a === 0 ? -1 : b === 0 ? 1 : m.venue_counts[b] - m.venue_counts[a]));
+  // venues arrive ordered: named venues by paper count, then Workshop / Other venue / Preprint only / Not checked yet
+  const order = m.venues.map((v, i) => i);
   const box = $('venues');
+  const SPECIAL = new Set(['Workshop', 'Other venue', 'Preprint only', 'Not checked yet']);
+  let named = 0;
   for (const i of order) {
     if (!m.venue_counts[i]) continue;
     S.venues.add(i);
     const lab = document.createElement('label');
-    lab.innerHTML = `<input type="checkbox" checked data-v="${i}"> ${esc(m.venues[i])} <small>${m.venue_counts[i].toLocaleString('en-US')}</small>`;
+    const special = SPECIAL.has(m.venues[i]);
+    if (!special && ++named > 18) lab.className = 'more';  // long tail hidden until "Show all"
+    if (special) lab.classList.add('special');
+    lab.innerHTML = `<input type="checkbox" checked data-v="${i}"> ${esc(m.venues[i])} <small>${compact(m.venue_counts[i])}</small>`;
     box.appendChild(lab);
+  }
+  if (named > 18) {
+    const more = document.createElement('button');
+    more.className = 'link'; more.type = 'button'; more.textContent = `Show all ${named} venues`;
+    more.onclick = () => { box.classList.toggle('expanded'); more.textContent = box.classList.contains('expanded') ? 'Show fewer' : `Show all ${named} venues`; };
+    box.after(more);
   }
   const syncVenues = () => { S.venueList = [...S.venues]; render(); };
   box.onchange = (e) => {
@@ -459,6 +470,8 @@ function stop() {
   S.playing = false; S.soft = null; $('play').textContent = '▶ Play';
   updateYearText(); render();
 }
+
+function compact(n) { return n >= 10000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + 'k' : n.toLocaleString('en-US'); }
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c])); }
 

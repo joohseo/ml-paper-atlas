@@ -72,3 +72,7 @@ button.link:hover { color: var(--text); }
 }
 #panel footer.credits { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 10px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 #panel footer.credits a { color: var(--muted); text-decoration: underline; }
+#venues label.more { display: none; }
+#venues.expanded label.more { display: flex; }
+#venues label.special { color: var(--muted); }
+#venues + button.link { margin-top: 6px; padding: 0; font-size: 12px; }
