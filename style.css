@@ -84,3 +84,12 @@ button.link:hover { color: var(--text); }
 input.range1 { width: 100%; margin: 4px 0 12px; accent-color: var(--accent); }
 #results li.partial { opacity: 0.6; }
 #results li small + small { margin-top: 1px; }
+#focusBar { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 3; display: flex; gap: 12px; align-items: center;
+  background: var(--panel); backdrop-filter: blur(8px); border: 1px solid var(--line); border-radius: 999px; padding: 6px 8px 6px 16px; font-size: 13px; max-width: calc(100% - 700px); }
+#focusBar[hidden] { display: none; }
+#focusText { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#focusClear { border-radius: 999px; white-space: nowrap; }
+#results li.head { cursor: default; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+#results li.head:hover { background: none; }
+#results li.head button { font-size: 12px; padding: 3px 10px; }
+@media (max-width: 1100px) { #focusBar { max-width: calc(100% - 40px); top: auto; bottom: 14px; } }

@@ -15,14 +15,14 @@ const CAT_RGB = [[91, 192, 235], [253, 231, 76], [155, 197, 61], [229, 89, 52], 
   [193, 123, 224], [242, 95, 156], [61, 218, 180], [150, 150, 150]];
 const LABEL_SIZE = [28, 21, 17, 15.5, 14.5];
 const MAX_LINES = 300;
-const FILTER = new DataFilterExtension({filterSize: 3, categorySize: 1});  // [year, citation pct, age-adjusted pct]
+const FILTER = new DataFilterExtension({filterSize: 4, categorySize: 1});  // [year, citation pct, age-adjusted pct, in focus set]
 const PCT_STEPS = [100, 50, 25, 10, 5, 2, 1, 0.5, 0.1];  // slider positions: show the top N% of papers
 const ADDITIVE = {depthCompare: 'always', blendColorOperation: 'add', blendColorSrcFactor: 'src-alpha', blendColorDstFactor: 'one'};
 const TYPES = {float32: Float32Array, uint8: Uint8Array, uint16: Uint16Array};
 const $ = (id) => document.getElementById(id);
 
 const S = {
-  meta: null, n: 0, cols: {}, aux: null, viewState: null, z0: 0, colorMode: 'topic', citeTop: 100, hotTop: 100,
+  meta: null, n: 0, cols: {}, aux: null, viewState: null, z0: 0, colorMode: 'topic', citeTop: 100, hotTop: 100, focus: null,
   y0: 0, y1: 0, soft: null, venues: new Set(), venueList: [],
   selected: null, edgeLines: [], playing: false,
   cards: new Map(), edgeShards: new Map(), searchShards: new Map(), idShards: new Map(),
@@ -119,8 +119,9 @@ function buildLayerData() {
   for (let i = 0; i < n; i++) perm[counts[key(i)]++] = i;
   S.perm = perm;
   computePercentiles();
-  S.fv = new Float32Array(n * 3);  // filter values in draw order
-  for (let k = 0; k < n; k++) { const i = perm[k]; S.fv[3 * k] = year[i]; S.fv[3 * k + 1] = S.citePct[i]; S.fv[3 * k + 2] = S.hotPct[i]; }
+  S.fv = new Float32Array(n * 4);  // filter values in draw order
+  S.inv = new Uint32Array(n);       // row → draw index
+  for (let k = 0; k < n; k++) { const i = perm[k]; S.inv[i] = k; S.fv[4 * k] = year[i]; S.fv[4 * k + 1] = S.citePct[i]; S.fv[4 * k + 2] = S.hotPct[i]; }
 
   const pos = new Float32Array(n * 2), rad = new Float32Array(n), vf = new Float32Array(n), yf = new Float32Array(n);
   const lw = new Float32Array(n);
@@ -140,19 +141,20 @@ function buildLayerData() {
   S.pointsData = {length: n, attributes: {
     getPosition: {value: pos, size: 2}, getRadius: {value: rad, size: 1},
     getFillColor: {value: S.colorBuf, size: 4}, getLineColor: {value: S.lineBuf, size: 4}, getLineWidth: {value: lw, size: 1},
-    getFilterValue: {value: S.fv, size: 3}, getFilterCategory: {value: vf, size: 1}}};
+    getFilterValue: {value: S.fv, size: 4}, getFilterCategory: {value: vf, size: 1}}};
 
   // glow for papers from the last 30 days
   const recent = [];
   for (let k = 0; k < n; k++) if (tMax - yf[k] <= 30 / 366) recent.push(k);
-  const g = recent.length, gp = new Float32Array(g * 2), gr = new Float32Array(g), gt = new Float32Array(g * 3), gv = new Float32Array(g);
+  const g = recent.length, gp = new Float32Array(g * 2), gr = new Float32Array(g), gt = new Float32Array(g * 4), gv = new Float32Array(g);
   S.glowSrc = Uint32Array.from(recent);
-  recent.forEach((k, j) => { gp[2 * j] = pos[2 * k]; gp[2 * j + 1] = pos[2 * k + 1]; gr[j] = rad[k] * 3.2; gt.set(S.fv.subarray(3 * k, 3 * k + 3), 3 * j); gv[j] = vf[k]; });
+  recent.forEach((k, j) => { gp[2 * j] = pos[2 * k]; gp[2 * j + 1] = pos[2 * k + 1]; gr[j] = rad[k] * 3.2; gt.set(S.fv.subarray(4 * k, 4 * k + 4), 4 * j); gv[j] = vf[k]; });
   S.glowColor = new Uint8Array(g * 4);
   fillGlowColors();
   S.glowData = {length: g, attributes: {
     getPosition: {value: gp, size: 2}, getFillColor: {value: S.glowColor, size: 4}, getRadius: {value: gr, size: 1},
-    getFilterValue: {value: gt, size: 3}, getFilterCategory: {value: gv, size: 1}}};
+    getFilterValue: {value: gt, size: 4}, getFilterCategory: {value: gv, size: 1}}};
+  S.glowFv = gt;
 }
 
 /* point colors: by top-level topic (default) or by arXiv primary category; brightness = recency */
@@ -245,15 +247,16 @@ function render() {
   const radiusScale = Math.pow(2, -0.6 * Math.max(0, dz));  // points grow gently when zooming in
   const yr = [S.y0, S.soft ?? S.y1 + 1];
   const cr = [S.citeTop >= 100 ? -2 : 100 - S.citeTop, 101], hr = [S.hotTop >= 100 ? -2 : 100 - S.hotTop, 101];
+  const fr = [S.focus ? 0.5 : -1, 2];
   const filter = {
-    extensions: [FILTER], filterRange: [yr, cr, hr], filterCategories: S.venueList,
-    filterSoftRange: [S.soft != null ? [S.y0, S.soft - 0.6] : yr, cr, hr],
+    extensions: [FILTER], filterRange: [yr, cr, hr, fr], filterCategories: S.venueList,
+    filterSoftRange: [S.soft != null ? [S.y0, S.soft - 0.6] : yr, cr, hr, fr],
   };
   const lv = currentLevel();
   const layers = [
     new BitmapLayer({
       id: 'terrain', image: BASE + 'terrain.png', bounds: S.meta.terrain_bounds,
-      opacity: Math.max(0.12, Math.min(1, 1.15 - dz * 0.28)),
+      opacity: Math.max(0.12, Math.min(1, 1.15 - dz * 0.28)) * (S.focus ? 0.45 : 1),
     }),
     new ScatterplotLayer({
       id: 'glow', data: S.glowData, radiusUnits: 'common', radiusScale, radiusMinPixels: 2.5, radiusMaxPixels: 22,
@@ -265,6 +268,16 @@ function render() {
       onHover: (info) => hover(info.index >= 0 ? {...info, index: S.perm[info.index]} : info),
       onClick: (info) => { if (info.index >= 0) select(S.perm[info.index]); return true; },
       ...filter,
+    }),
+    new ScatterplotLayer({  // papers in the focus set, drawn larger so they stand out at any zoom
+      id: 'focus', data: S.focus ? S.focusRows : [], getPosition: (i) => [S.cols.x[i], S.cols.y[i]],
+      getRadius: (i) => 3 + 0.9 * Math.cbrt(Math.max(0, S.cols.cites[i])), radiusUnits: 'pixels', radiusMaxPixels: 26,
+      getFillColor: (i) => [...colorOf(i), 210], getLineColor: [255, 255, 255, 200], stroked: true, lineWidthUnits: 'pixels', getLineWidth: 1,
+      updateTriggers: {getFillColor: S.colorMode}, pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 230],
+      onHover: (info) => hover(info.index >= 0 ? {...info, index: info.object} : info),
+      onClick: (info) => { if (info.object != null) select(info.object); return true; },
+      extensions: [FILTER], filterRange: [yr, cr, hr, [-1, 2]], filterCategories: S.venueList,
+      getFilterValue: (i) => [S.cols.year[i], S.citePct[i], S.hotPct[i], 1], getFilterCategory: (i) => S.cols.venue[i],
     }),
     new LineLayer({
       id: 'cites', data: S.edgeLines, getSourcePosition: (d) => d.s, getTargetPosition: (d) => d.t,
@@ -365,7 +378,7 @@ async function rowOfId(arxivId) {
 /* ?paper=<arXiv id> opens a paper, ?q=<query> fills the search box */
 async function deepLink() {
   const sp = new URLSearchParams(location.search);
-  if (sp.get('q')) { $('q').value = sp.get('q'); onSearch(); }
+  if (sp.get('q')) { S.autoFocus = sp.get('focus') === '1'; $('q').value = sp.get('q'); onSearch(); }
   if (sp.get('paper')) {
     const i = await rowOfId(sp.get('paper'));
     if (i != null) flyTo(i);
@@ -429,6 +442,60 @@ function flyTo(i) {
   select(i);
 }
 
+/* ---------- focus: show only a chosen set of papers (an author's papers, or all search matches) ---------- */
+function setFocus(rows, label) {
+  const fv = S.fv, n = S.n;
+  for (let k = 0; k < n; k++) fv[4 * k + 3] = 0;
+  for (const i of rows) fv[4 * S.inv[i] + 3] = 1;
+  S.glowSrc.forEach((k, j) => { S.glowFv[4 * j + 3] = fv[4 * k + 3]; });
+  S.focus = rows.length ? {n: rows.length, label} : null;
+  S.focusRows = Array.from(rows);
+  // new attribute objects so deck.gl re-uploads only the filter values
+  S.pointsData = {...S.pointsData, attributes: {...S.pointsData.attributes, getFilterValue: {value: fv, size: 4}}};
+  S.glowData = {...S.glowData, attributes: {...S.glowData.attributes, getFilterValue: {value: S.glowFv, size: 4}}};
+  const bar = $('focusBar');
+  if (S.focus) {
+    $('focusText').textContent = `Showing ${rows.length.toLocaleString('en-US')} ${rows.length === 1 ? 'paper' : 'papers'} ${label}`;
+    bar.hidden = false;
+    fitTo(rows);
+  } else {
+    bar.hidden = true;
+    render();
+  }
+}
+
+function fitTo(rows) {
+  const X = S.cols.x, Y = S.cols.y;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const i of rows) { x0 = Math.min(x0, X[i]); x1 = Math.max(x1, X[i]); y0 = Math.min(y0, Y[i]); y1 = Math.max(y1, Y[i]); }
+  const el = $('map'), w = el.clientWidth - 360, h = el.clientHeight - 120;
+  const span = Math.max(x1 - x0, y1 - y0, (S.meta.bounds[2] - S.meta.bounds[0]) / 40);
+  const zoom = Math.min(S.z0 + 6, Math.log2(Math.min(w, h) / span));
+  const scale = Math.pow(2, zoom);
+  S.viewState = {...S.viewState, target: [(x0 + x1) / 2 - 160 / scale, (y0 + y1) / 2, 0], zoom,
+    transitionDuration: 800, transitionInterpolator: new LinearInterpolator(['target', 'zoom'])};
+  render();
+}
+
+/* exact author name → rows (given-name family-name order, or reversed) */
+async function authorRows(q) {
+  const toks = normText(q).match(/[a-z0-9]+/g) || [];
+  if (toks.length < 2 || !S.meta.name_shards) return null;
+  for (const t of [toks, [...toks.slice(1), toks[0]], [...toks].reverse()]) {
+    const sk = t[t.length - 1].slice(0, 2);
+    if (!S.meta.name_shards.includes(sk)) continue;
+    const sh = await cached(S.nameShards ||= new Map(), sk, () => fetchJSON(`${BASE}names/${sk}.json`));
+    const rows = sh[t.join(' ')];
+    if (rows) return {rows, key: t.join(' ')};
+  }
+  return null;
+}
+
+function displayName(authors, key) {  // the author's name as written in the paper
+  for (const a of authors.replace(/ and /g, ',').split(',')) if ((normText(a).match(/[a-z0-9]+/g) || []).join(' ') === key) return a.trim();
+  return key;
+}
+
 /* ---------- search ----------
  * Two inverted indexes, sharded by the first two letters of a token: title tokens (search/) and
  * author name tokens (authors/: given and family names). Only shards for the query's terms load.
@@ -459,12 +526,24 @@ async function lookup(term) {
   return {title: collect(ts), author: collect(as)};
 }
 
-async function renderResults(top, total, seq, partial = 0) {
+async function renderResults(top, total, seq, partial = 0, focusRows = null, header = null) {
   const ul = $('results');
   const cards = await Promise.all(top.map(card));
   if (seq !== searchSeq) return;
-  ul.innerHTML = top.length ? '' : '<li><small>No results</small></li>';
-  if (total > top.length) ul.innerHTML = `<li><small>Top ${top.length} of ${total.toLocaleString('en-US')} by relevance</small></li>`;
+  ul.innerHTML = top.length ? '' : '<li><small>No results. The map only has arXiv papers in its eight AI categories.</small></li>';
+  if (header || (focusRows && focusRows.length > 1)) {
+    const li = document.createElement('li');
+    li.className = 'head';
+    li.innerHTML = `<small>${header || `${total.toLocaleString('en-US')} matches · top ${top.length} by relevance`}</small>`;
+    if (focusRows && focusRows.length > 1) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = 'Show only these on the map';
+      b.onclick = (e) => { e.stopPropagation(); setFocus(focusRows, header ? header.replace(/ ·.*$/, '').replace(/^Papers /, '') : `matching “${$('q').value.trim()}”`); };
+      li.appendChild(b);
+      if (S.autoFocus) { S.autoFocus = false; b.click(); }  // ?q=…&focus=1 shares a focused view
+    }
+    ul.appendChild(li);
+  }
   top.forEach((i, k) => {
     const li = document.createElement('li');
     const ci = cards[k].cites;
@@ -491,6 +570,16 @@ function onSearch() {
     const terms = [...new Set((normText(q).match(/[a-z0-9]+/g) || []).filter((w) => w.length >= 2 && !STOP.has(w)))];
     if (!terms.length) { ul.innerHTML = ''; return; }
     ul.innerHTML = '<li><small>Searching…</small></li>';
+    const au = await authorRows(q);
+    if (seq !== searchSeq) return;
+    if (au) {  // the query is an author's full name: list their papers, most cited first
+      const C = S.cols.cites, rows = au.rows;
+      const top = [...rows].sort((x, y) => C[y] - C[x]).slice(0, 30);
+      const first = await card(top[0]);
+      const name = displayName(first.authors, au.key);
+      renderResults(top, rows.length, seq, 0, rows, `Papers by ${esc(name)} · ${rows.length.toLocaleString('en-US')} on the map, most cited first`);
+      return;
+    }
     const [posts, aux] = await Promise.all([Promise.all(terms.map(lookup)), loadAux()]);
     if (seq !== searchSeq) return;
 
@@ -531,7 +620,7 @@ function onSearch() {
     const extra = partial.map((e) => [score(e, 1), e[0]]).sort((a, b) => b[0] - a[0]);
     const top = ranked.slice(0, 30).map((x) => x[1]);
     const more = extra.slice(0, Math.max(0, 30 - top.length)).map((x) => x[1]);
-    renderResults([...top, ...more], ranked.length + extra.length, seq, more.length);
+    renderResults([...top, ...more], ranked.length + extra.length, seq, more.length, ranked.map((x) => x[1]));
   }, 200);
 }
 
@@ -611,6 +700,7 @@ function initControls() {
   $('citeNote').textContent = m.citations_ready < 0.99
     ? `Citation counts are ${(m.citations_ready * 100).toFixed(0)}% loaded (papers without data are drawn at minimum size).` : '';
   $('q').oninput = onSearch;
+  $('focusClear').onclick = () => setFocus([], '');
   $('cardClose').onclick = () => select(null);
 }
 
