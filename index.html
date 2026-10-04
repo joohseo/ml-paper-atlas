@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Paper Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/deck.gl@9.1.15/dist.min.js"></script>
+<script src="https://unpkg.com/@deck.gl/extensions@9.1.15/dist.min.js"></script>
+</head>
+<body>
+<div id="map"></div>
+
+<aside id="panel">
+  <header>
+    <h1>AI Paper Map</h1>
+    <p id="stats">불러오는 중…</p>
+  </header>
+
+  <section class="search">
+    <input id="q" type="search" placeholder="제목·저자 검색" autocomplete="off">
+    <ul id="results"></ul>
+  </section>
+
+  <section>
+    <div class="row between">
+      <h2>연도</h2>
+      <span id="yearText" class="mono"></span>
+    </div>
+    <div class="range2">
+      <input id="y0" type="range" step="1">
+      <input id="y1" type="range" step="1">
+    </div>
+    <div class="row">
+      <button id="play" type="button" aria-label="연도 재생">▶ 재생</button>
+      <button id="reset" type="button">전체</button>
+    </div>
+  </section>
+
+  <section>
+    <div class="row between">
+      <h2>Venue</h2>
+      <span class="row gap">
+        <button class="link" id="vAll" type="button">모두</button>
+        <button class="link" id="vNone" type="button">없음</button>
+      </span>
+    </div>
+    <div id="venues"></div>
+  </section>
+
+  <section>
+    <h2>분야 (점 색)</h2>
+    <div id="legend"></div>
+    <p class="hint">점 크기 = 피인용 수 · 밝기 = 최신성 · 최근 30일 논문은 빛남</p>
+    <p class="hint" id="citeNote"></p>
+  </section>
+
+  <footer class="credits">
+    Metadata: <a href="https://arxiv.org" target="_blank" rel="noopener">arXiv</a> (OAI-PMH) ·
+    Citations &amp; venues: <a href="https://www.semanticscholar.org" target="_blank" rel="noopener">Semantic Scholar</a> ·
+    Embeddings: SPECTER2 · Labels: Claude Haiku ·
+    <a href="?profile=m2">전체</a> / <a href="?profile=m1">cs.CL 2023~</a>
+  </footer>
+</aside>
+
+<article id="card" hidden>
+  <button id="cardClose" type="button" aria-label="닫기">×</button>
+  <div id="cardBody"></div>
+</article>
+
+<div id="tooltip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
