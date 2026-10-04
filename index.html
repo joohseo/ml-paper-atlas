@@ -5,16 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ML Paper Atlas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <script src="https://unpkg.com/deck.gl@9.1.15/dist.min.js"></script>
 <script src="https://unpkg.com/@deck.gl/extensions@9.1.15/dist.min.js"></script>
 </head>
 <body>
 <div id="map"></div>
+<button id="panelOpen" type="button" aria-label="Show panel" title="Show panel" hidden>☰ ML Paper Atlas</button>
 
 <aside id="panel">
   <header>
+    <button id="panelClose" type="button" aria-label="Hide panel" title="Hide panel">‹</button>
     <h1>ML Paper Atlas</h1>
     <p id="stats">Loading…</p>
   </header>

@@ -13,7 +13,16 @@ const PROFILE = new URLSearchParams(location.search).get('profile') || 'm2';
 const BASE = `data/${PROFILE}/`;
 const CAT_RGB = [[91, 192, 235], [253, 231, 76], [155, 197, 61], [229, 89, 52], [250, 121, 33],
   [193, 123, 224], [242, 95, 156], [61, 218, 180], [150, 150, 150]];
-const LABEL_SIZE = [28, 21, 17, 15.5, 14.5];
+// map labels, styled like an atlas: fields in spaced capitals, subtopics in sentence case
+const LABEL_FONT = '"Barlow Semi Condensed", "Barlow", "Arial Narrow", system-ui, sans-serif';
+const LABEL_STYLE = [
+  {size: 21, weight: 600, caps: true, color: [255, 255, 255, 240]},
+  {size: 17, weight: 600, color: [238, 241, 246, 235]},
+  {size: 15, weight: 500, color: [228, 233, 240, 230]},
+  {size: 13.5, weight: 500, color: [222, 228, 236, 225]},
+  {size: 13, weight: 500, color: [222, 228, 236, 220]},
+];
+const labelStyle = (lv) => LABEL_STYLE[Math.min(lv, LABEL_STYLE.length - 1)];
 const MAX_LINES = 300;
 const FILTER = new DataFilterExtension({filterSize: 4, categorySize: 1});  // [year, citation pct, age-adjusted pct, in focus set]
 const PCT_STEPS = [100, 50, 25, 10, 5, 2, 1, 0.5, 0.1];  // slider positions: show the top N% of papers
@@ -22,7 +31,7 @@ const TYPES = {float32: Float32Array, uint8: Uint8Array, uint16: Uint16Array};
 const $ = (id) => document.getElementById(id);
 
 const S = {
-  meta: null, n: 0, cols: {}, aux: null, viewState: null, z0: 0, colorMode: 'topic', citeTop: 100, hotTop: 100, focus: null,
+  meta: null, n: 0, cols: {}, aux: null, viewState: null, z0: 0, colorMode: 'topic', citeTop: 100, hotTop: 100, focus: null, fontKey: 0,
   y0: 0, y1: 0, soft: null, venues: new Set(), venueList: [],
   selected: null, edgeLines: [], playing: false,
   cards: new Map(), edgeShards: new Map(), searchShards: new Map(), idShards: new Map(),
@@ -42,6 +51,10 @@ async function main() {
   const [meta, buf] = await Promise.all([fetchJSON(BASE + 'meta.json'), fetchBuf(BASE + 'points.bin')]);
   S.meta = meta; S.n = meta.count;
   S.cols = readColumns(buf, meta.columns, S.n);
+  // label glyphs are rasterized once per font, so give the web font a moment to arrive first
+  const fonts = [`600 21px ${LABEL_FONT}`, `500 15px ${LABEL_FONT}`].map((f) => document.fonts.load(f));
+  await Promise.race([Promise.all(fonts), new Promise((r) => setTimeout(r, 2500))]);
+  document.fonts.ready.then(() => { S.fontKey++; if (S.deck) render(); });
   decodeColumns();
   buildLayerData();
   initView();
@@ -294,11 +307,12 @@ function render() {
       getLineWidth: 1.5, getRadius: 9, radiusUnits: 'pixels',
     }),
     new TextLayer({
-      id: `labels-${lv}`, data: placeLabels(lv),
+      id: `labels-${lv}-${S.fontKey}`, data: placeLabels(lv),
       getPosition: (d) => [d.x, d.y], getText: (d) => d.text,
-      getSize: LABEL_SIZE[lv] ?? 14, sizeUnits: 'pixels', getColor: lv === 0 ? [255, 255, 255, 255] : [240, 243, 248, 245],
-      fontFamily: 'Inter, system-ui, sans-serif', fontWeight: lv === 0 ? 700 : 600, characterSet: 'auto',
-      fontSettings: {sdf: true, fontSize: 64, buffer: 6}, outlineWidth: 7, outlineColor: [0, 0, 0, 255], lineHeight: 1.1,
+      getSize: labelStyle(lv).size, sizeUnits: 'pixels', getColor: labelStyle(lv).color,
+      fontFamily: LABEL_FONT, fontWeight: labelStyle(lv).weight, characterSet: 'auto',
+      fontSettings: {sdf: true, fontSize: 72, buffer: 8, radius: 12}, outlineWidth: 4, outlineColor: [6, 8, 12, 235],
+      lineHeight: 1.12,
     }),
   ];
   S.deck.setProps({viewState: S.viewState, layers});
@@ -308,17 +322,24 @@ function render() {
  * Boxes are computed in screen space: largest clusters first, labels that would overlap are dropped.
  * The result is memoized per view so unrelated re-renders (e.g. year playback) reuse the same array. */
 const wrapCache = new Map();
-function wrapLabel(name, size) {
-  const key = name + '|' + size;
+const measureCtx = document.createElement('canvas').getContext('2d');
+function wrapLabel(name, lv) {
+  const st = labelStyle(lv), key = name + '|' + lv + '|' + S.fontKey;
   if (!wrapCache.has(key)) {
-    const maxChars = 22, lines = [];
+    // capitals get hair spaces between letters (TextLayer has no letter-spacing)
+    const text = st.caps ? name.toUpperCase() : name;
+    const spaced = (s) => (st.caps ? [...s].join('\u200A') : s);
+    measureCtx.font = `${st.weight} ${st.size}px ${LABEL_FONT}`;
+    const maxW = st.size * (st.caps ? 11 : 12.5), lines = [];
     let cur = '';
-    for (const w of name.split(/\s+/)) {
-      if (cur && (cur + ' ' + w).length > maxChars) { lines.push(cur); cur = w; } else cur = cur ? cur + ' ' + w : w;
+    for (const w of text.split(/\s+/)) {
+      const next = cur ? cur + ' ' + w : w;
+      if (cur && measureCtx.measureText(spaced(next)).width > maxW) { lines.push(cur); cur = w; } else cur = next;
     }
     if (cur) lines.push(cur);
-    const width = Math.max(...lines.map((l) => l.length)) * size * 0.6, height = lines.length * size * 1.32;
-    wrapCache.set(key, {text: lines.join('\n'), width, height});
+    const out = lines.map(spaced);
+    const width = Math.max(...out.map((l) => measureCtx.measureText(l).width)), height = out.length * st.size * 1.25;
+    wrapCache.set(key, {text: out.join('\n'), width, height});
   }
   return wrapCache.get(key);
 }
@@ -326,14 +347,14 @@ function wrapLabel(name, size) {
 let labelMemo = {key: '', data: []};
 function placeLabels(lv) {
   const vs = S.viewState, el = $('map'), W = el.clientWidth, H = el.clientHeight;
-  const key = `${lv}|${vs.zoom.toFixed(4)}|${vs.target[0].toFixed(5)}|${vs.target[1].toFixed(5)}|${W}x${H}`;
+  const key = `${lv}|${S.fontKey}|${vs.zoom.toFixed(4)}|${vs.target[0].toFixed(5)}|${vs.target[1].toFixed(5)}|${W}x${H}`;
   if (labelMemo.key === key) return labelMemo.data;
-  const size = LABEL_SIZE[lv] ?? 14, scale = Math.pow(2, vs.zoom), pad = 8;
+  const scale = Math.pow(2, vs.zoom), pad = 9;
   const placed = [], out = [];
   const cand = S.meta.labels.filter((l) => l.l === lv).sort((a, b) => b.n - a.n);
   for (const l of cand) {
     const sx = (l.x - vs.target[0]) * scale + W / 2, sy = H / 2 - (l.y - vs.target[1]) * scale;
-    const w = wrapLabel(l.name, size);
+    const w = wrapLabel(l.name, lv);
     const box = [sx - w.width / 2 - pad, sy - w.height / 2 - pad, sx + w.width / 2 + pad, sy + w.height / 2 + pad];
     if (box[2] < 0 || box[0] > W || box[3] < 0 || box[1] > H) continue;
     if (placed.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
@@ -700,6 +721,16 @@ function initControls() {
   $('citeNote').textContent = m.citations_ready < 0.99
     ? `Citation counts are ${(m.citations_ready * 100).toFixed(0)}% loaded (papers without data are drawn at minimum size).` : '';
   $('q').oninput = onSearch;
+  const setPanel = (open) => {
+    document.body.classList.toggle('panel-closed', !open);
+    $('panelOpen').hidden = open;
+    try { localStorage.setItem('panelOpen', open ? '1' : '0'); } catch (e) { /* storage unavailable */ }
+  };
+  $('panelClose').onclick = () => setPanel(false);
+  $('panelOpen').onclick = () => setPanel(true);
+  let saved = null;
+  try { saved = localStorage.getItem('panelOpen'); } catch (e) { /* storage unavailable */ }
+  setPanel(saved !== '0');
   $('focusClear').onclick = () => setFocus([], '');
   $('cardClose').onclick = () => select(null);
 }
