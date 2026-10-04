@@ -230,13 +230,19 @@ function loadAux() {
   return S.auxPromise;
 }
 
+function panelStartsOpen() {  // ?panel=0 opens with the panel folded; otherwise the last choice in this browser
+  const p = new URLSearchParams(location.search).get('panel');
+  if (p != null) return p !== '0';
+  try { return localStorage.getItem('panelOpen') !== '0'; } catch (e) { return true; }
+}
+
 function initView() {
   const [x0, y0, x1, y1] = S.meta.bounds;
   const el = $('map');
-  const w = el.clientWidth - 320, h = el.clientHeight;
+  const side = panelStartsOpen() ? 320 : 0, w = el.clientWidth - side, h = el.clientHeight;
   const zoom = Math.log2(Math.min(w / (x1 - x0), h / (y1 - y0))) - 0.15;
   S.z0 = zoom;
-  S.viewState = {target: [(x0 + x1) / 2 - 160 / Math.pow(2, zoom), (y0 + y1) / 2, 0], zoom, minZoom: zoom - 2, maxZoom: zoom + 9};
+  S.viewState = {target: [(x0 + x1) / 2 - (side / 2) / Math.pow(2, zoom), (y0 + y1) / 2, 0], zoom, minZoom: zoom - 2, maxZoom: zoom + 9};
   S.deck = new Deck({
     parent: el,
     views: new OrthographicView({id: 'ortho', flipY: false}),
@@ -733,9 +739,7 @@ function initControls() {
   };
   $('panelClose').onclick = () => setPanel(false);
   $('panelOpen').onclick = () => setPanel(true);
-  let saved = null;
-  try { saved = localStorage.getItem('panelOpen'); } catch (e) { /* storage unavailable */ }
-  setPanel(saved !== '0');
+  setPanel(panelStartsOpen());
   $('focusClear').onclick = () => setFocus([], '');
   $('cardClose').onclick = () => select(null);
 }
