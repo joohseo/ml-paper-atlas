@@ -32,7 +32,7 @@ button.link:hover { color: var(--text); }
 
 .search input { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(0,0,0,0.35); color: var(--text); font: inherit; }
 .search input:focus { outline: 1px solid rgba(255,210,122,0.5); }
-#results { list-style: none; margin: 6px 0 0; padding: 0; max-height: 240px; overflow-y: auto; }
+#results { list-style: none; margin: 6px 0 0; padding: 0; max-height: 42vh; overflow-y: auto; }
 #results li { padding: 6px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
 #results li:hover { background: rgba(255,255,255,0.05); }
 #results li small { display: block; color: var(--muted); }
@@ -82,3 +82,5 @@ button.link:hover { color: var(--text); }
 #legend.topics { grid-template-columns: 1fr; font-size: 13px; }
 #legend.topics span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 input.range1 { width: 100%; margin: 4px 0 12px; accent-color: var(--accent); }
+#results li.partial { opacity: 0.6; }
+#results li small + small { margin-top: 1px; }

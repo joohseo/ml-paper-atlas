@@ -430,27 +430,47 @@ function flyTo(i) {
 }
 
 /* ---------- search ----------
- * Inverted index of title tokens and author surnames, sharded by the first two letters; only the
- * shards for the query's tokens are fetched. Each term matches by prefix; terms are intersected.
- * Ranking: title equals the query > exact token matches > prefix matches, then citations. */
+ * Two inverted indexes, sharded by the first two letters of a token: title tokens (search/) and
+ * author name tokens (authors/: given and family names). Only shards for the query's terms load.
+ * A term matches a paper if it hits the title or an author, exactly or as a prefix.
+ * Ranking is by relevance first: rare terms count more (idf), exact beats prefix, titles made up
+ * mostly of the query score higher, a full author-name match gets a bonus; citations only break ties.
+ * When few papers match every term, papers missing one term follow, ranked lower. */
 const STOP = new Set('a an and are as at be by for from in into is of on or the to with via using towards toward we our its their this that'.split(' '));
 const ARXIV_ID = /^\s*(arxiv:)?\s*(\d{4}\.\d{4,5}|[a-z-]+(\.[a-z]{2})?\/\d{7})(v\d+)?\s*$/i;
+const normText = (s) => s.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
 
-function searchShard(k) {
-  if (!S.meta.search_shards.includes(k)) return Promise.resolve({});
-  return cached(S.searchShards, k, () => fetchJSON(`${BASE}search/${k}.json`));
+function indexShard(kind, k) {
+  const list = kind === 'authors' ? S.meta.author_shards : S.meta.search_shards;
+  if (!list || !list.includes(k)) return Promise.resolve({});
+  const map = kind === 'authors' ? (S.authorShards ||= new Map()) : S.searchShards;
+  return cached(map, k, () => fetchJSON(`${BASE}${kind}/${k}.json`));
 }
 
-async function renderResults(top, total, seq) {
+// postings for one term: {exact: Set, prefix: Set} for titles and authors
+async function lookup(term) {
+  const k = term.slice(0, 2);
+  const [ts, as] = await Promise.all([indexShard('search', k), indexShard('authors', k)]);
+  const collect = (sh) => {
+    const exact = new Set(sh[term] || []), prefix = new Set();
+    for (const [tok, ids] of Object.entries(sh)) if (tok !== term && tok.startsWith(term)) for (const i of ids) prefix.add(i);
+    return {exact, prefix};
+  };
+  return {title: collect(ts), author: collect(as)};
+}
+
+async function renderResults(top, total, seq, partial = 0) {
   const ul = $('results');
   const cards = await Promise.all(top.map(card));
   if (seq !== searchSeq) return;
   ul.innerHTML = top.length ? '' : '<li><small>No results</small></li>';
-  if (total > top.length) ul.innerHTML = `<li><small>Top ${top.length} of ${total.toLocaleString('en-US')} (title match, then citations)</small></li>`;
+  if (total > top.length) ul.innerHTML = `<li><small>Top ${top.length} of ${total.toLocaleString('en-US')} by relevance</small></li>`;
   top.forEach((i, k) => {
     const li = document.createElement('li');
     const ci = cards[k].cites;
-    li.innerHTML = `${esc(cards[k].title)}<small>${cards[k].date.slice(0, 4)} · ${esc(S.meta.venues[S.cols.venue[i]])}${ci != null ? ' · ' + ci.toLocaleString('en-US') + ' citations' : ''}</small>`;
+    const authors = cards[k].authors.length > 70 ? cards[k].authors.slice(0, 70) + '…' : cards[k].authors;
+    li.innerHTML = `${esc(cards[k].title)}<small>${esc(authors)}</small><small>${cards[k].date.slice(0, 4)} · ${esc(S.meta.venues[S.cols.venue[i]])}${ci != null ? ' · ' + ci.toLocaleString('en-US') + ' citations' : ''}</small>`;
+    if (k >= top.length - partial) li.classList.add('partial');
     li.onclick = () => flyTo(i);
     ul.appendChild(li);
   });
@@ -468,29 +488,50 @@ function onSearch() {
       if (seq === searchSeq) renderResults(i == null ? [] : [i], i == null ? 0 : 1, seq);
       return;
     }
-    const uniq = [...new Set((q.toLowerCase().match(/[a-z0-9]+/g) || []).filter((w) => w.length >= 2 && !STOP.has(w)))];
-    if (!uniq.length) { ul.innerHTML = ''; return; }
+    const terms = [...new Set((normText(q).match(/[a-z0-9]+/g) || []).filter((w) => w.length >= 2 && !STOP.has(w)))];
+    if (!terms.length) { ul.innerHTML = ''; return; }
     ul.innerHTML = '<li><small>Searching…</small></li>';
-    let hits = null, exact = null;
-    for (const w of uniq) {
-      const sh = await searchShard(w.slice(0, 2));
-      const set = new Set(), ex = new Set(sh[w] || []);
-      for (const [tok, ids] of Object.entries(sh)) if (tok.startsWith(w)) for (const i of ids) set.add(i);
-      hits = hits ? new Set([...hits].filter((i) => set.has(i))) : set;
-      exact = exact ? new Set([...exact].filter((i) => ex.has(i))) : ex;
-      if (!hits.size) break;
-    }
-    const aux = await loadAux();
+    const [posts, aux] = await Promise.all([Promise.all(terms.map(lookup)), loadAux()]);
     if (seq !== searchSeq) return;
-    const C = S.cols.cites, T = S.cols.year, NT = aux.ntok;
-    const score = (i) => {
-      let s = Math.log10(1 + Math.max(0, C[i])) * 0.8;
-      if (exact.has(i)) s += 2 - 0.15 * Math.max(0, NT[i] - uniq.length) + (NT[i] === uniq.length ? 5 : 0);
-      return s;
+
+    const N = S.n, nt = terms.length, NT = aux.ntok, C = S.cols.cites, T = S.cols.year;
+    const idf = posts.map((p) => {
+      const df = p.title.exact.size + p.title.prefix.size + p.author.exact.size + p.author.prefix.size;
+      return Math.log(1 + N / (1 + df));
+    });
+    // per paper: matched weight, terms hit, title hits, author hits
+    const acc = new Map();
+    posts.forEach((p, t) => {
+      const add = (ids, w, field) => {
+        for (const i of ids) {
+          let r = acc.get(i);
+          if (!r) acc.set(i, (r = {w: 0, hit: 0, title: 0, author: 0, seen: -1}));
+          if (r.seen === t) continue;  // count each term once, at its best match (callers go best-first)
+          r.seen = t; r.w += idf[t] * w; r.hit++;
+          if (field === 'title') r.title++; else r.author++;
+        }
+      };
+      add(p.title.exact, 1, 'title'); add(p.author.exact, 1, 'author');
+      add(p.title.prefix, 0.7, 'title'); add(p.author.prefix, 0.7, 'author');
+    });
+    const maxW = idf.reduce((a, b) => a + b, 0);
+    const need = nt === 1 ? 1 : nt;
+    let cand = [...acc].filter(([, r]) => r.hit >= need);
+    let partial = [];
+    if (cand.length < 10 && nt >= 2) partial = [...acc].filter(([, r]) => r.hit === nt - 1);
+    const score = ([i, r], penalty = 0) => {
+      let s = r.w / maxW;                                         // 0..1: how much of the query matched
+      if (r.title) s += 0.6 * Math.min(1, r.title / Math.max(NT[i], 1));  // title made of the query terms
+      if (r.title === nt && NT[i] === nt) s += 1.0;               // the title is the query
+      if (r.author === nt && nt >= 2) s += 0.8;                   // full author name (e.g. "kaiming he")
+      s += 0.08 * Math.log10(1 + Math.max(0, C[i]));             // tiebreak only
+      return s - penalty;
     };
-    const top = [...hits].map((i) => [score(i), i]).sort((a, b) => (b[0] - a[0]) || (T[b[1]] - T[a[1]]))
-      .slice(0, 30).map((x) => x[1]);
-    renderResults(top, hits.size, seq);
+    const ranked = cand.map((e) => [score(e), e[0]]).sort((a, b) => (b[0] - a[0]) || (T[b[1]] - T[a[1]]));
+    const extra = partial.map((e) => [score(e, 1), e[0]]).sort((a, b) => b[0] - a[0]);
+    const top = ranked.slice(0, 30).map((x) => x[1]);
+    const more = extra.slice(0, Math.max(0, 30 - top.length)).map((x) => x[1]);
+    renderResults([...top, ...more], ranked.length + extra.length, seq, more.length);
   }, 200);
 }
 
