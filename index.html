@@ -51,7 +51,13 @@
   </section>
 
   <section>
-    <h2>Category (point color)</h2>
+    <div class="row between">
+      <h2>Color by</h2>
+      <span class="seg" id="colorMode">
+        <button type="button" data-mode="topic" class="on">Topic</button>
+        <button type="button" data-mode="cat">arXiv category</button>
+      </span>
+    </div>
     <div id="legend"></div>
     <p class="hint">Size = citations · Brightness = recency · Papers from the last 30 days glow</p>
     <p class="hint" id="citeNote"></p>

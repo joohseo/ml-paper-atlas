@@ -21,7 +21,7 @@ const TYPES = {float32: Float32Array, uint8: Uint8Array, uint16: Uint16Array};
 const $ = (id) => document.getElementById(id);
 
 const S = {
-  meta: null, n: 0, cols: {}, aux: null, viewState: null, z0: 0,
+  meta: null, n: 0, cols: {}, aux: null, viewState: null, z0: 0, colorMode: 'topic',
   y0: 0, y1: 0, soft: null, venues: new Set(), venueList: [],
   selected: null, edgeLines: [], playing: false,
   cards: new Map(), edgeShards: new Map(), searchShards: new Map(), idShards: new Map(),
@@ -69,38 +69,104 @@ function decodeColumns() {
   S.tMin = year.reduce((a, b) => (b < a ? b : a), Infinity); S.tMax = year.reduce((a, b) => (b > a ? b : a), 0);
 }
 
+/* Draw order: big circles first so small points stay visible on top of them.
+ * Attributes are stored in that order; S.perm maps a drawn index back to the paper's row. */
 function buildLayerData() {
-  const {x, y, year, cites, cat, venue} = S.cols;
-  const n = S.n, tMin = S.tMin, tMax = S.tMax;
-  const pos = new Float32Array(n * 2), col = new Uint8Array(n * 4), rad = new Float32Array(n), vf = new Float32Array(n);
+  const {x, y, year, cites, cq, venue} = S.cols;
+  const n = S.n, tMin = S.tMin, tMax = S.tMax, unknown = S.meta.cite_unknown;
+  // counting sort by citation code, descending (unknown counts as 0)
+  const key = (i) => (cq[i] === unknown ? 0 : cq[i]);
+  const counts = new Uint32Array(65537);
+  for (let i = 0; i < n; i++) counts[key(i)]++;
+  for (let k = 65535, acc = 0; k >= 0; k--) { const c = counts[k]; counts[k] = acc; acc += c; }
+  const perm = new Uint32Array(n);
+  for (let i = 0; i < n; i++) perm[counts[key(i)]++] = i;
+  S.perm = perm;
+
+  const pos = new Float32Array(n * 2), rad = new Float32Array(n), vf = new Float32Array(n), yf = new Float32Array(n);
+  const lw = new Float32Array(n);
   const [bx0, by0, bx1, by1] = S.meta.bounds;
   const unit = Math.max(bx1 - bx0, by1 - by0) / 2500;
-  const recent = [];
-  for (let i = 0; i < n; i++) {
-    pos[2 * i] = x[i]; pos[2 * i + 1] = y[i];
-    const c = CAT_RGB[cat[i]] || CAT_RGB[8];
-    const age = (year[i] - tMin) / Math.max(tMax - tMin, 1e-6);  // 0 = oldest
-    col[4 * i] = c[0]; col[4 * i + 1] = c[1]; col[4 * i + 2] = c[2];
-    col[4 * i + 3] = 70 + 185 * Math.pow(age, 1.6);
-    rad[i] = unit * (0.7 + 0.32 * Math.cbrt(Math.max(0, cites[i])));  // radius ∝ citations^(1/3)
-    vf[i] = venue[i];
-    if (tMax - year[i] <= 30 / 366) recent.push(i);
+  S.big = new Uint8Array(n);  // in draw order: 1 = drawn as a translucent bubble with a rim
+  for (let k = 0; k < n; k++) {
+    const i = perm[k];
+    pos[2 * k] = x[i]; pos[2 * k + 1] = y[i];
+    const c = Math.max(0, cites[i]);
+    rad[k] = unit * (0.7 + 0.32 * Math.cbrt(c));  // radius ∝ citations^(1/3)
+    vf[k] = venue[i]; yf[k] = year[i];
+    if (c >= 300) { S.big[k] = 1; lw[k] = 1; }
   }
+  S.colorBuf = new Uint8Array(n * 4); S.lineBuf = new Uint8Array(n * 4);
+  fillColors();
   S.pointsData = {length: n, attributes: {
-    getPosition: {value: pos, size: 2}, getFillColor: {value: col, size: 4}, getRadius: {value: rad, size: 1},
-    getFilterValue: {value: year, size: 1}, getFilterCategory: {value: vf, size: 1}}};
+    getPosition: {value: pos, size: 2}, getRadius: {value: rad, size: 1},
+    getFillColor: {value: S.colorBuf, size: 4}, getLineColor: {value: S.lineBuf, size: 4}, getLineWidth: {value: lw, size: 1},
+    getFilterValue: {value: yf, size: 1}, getFilterCategory: {value: vf, size: 1}}};
+
   // glow for papers from the last 30 days
-  const g = recent.length, gp = new Float32Array(g * 2), gc = new Uint8Array(g * 4), gr = new Float32Array(g);
-  const gt = new Float32Array(g), gv = new Float32Array(g);
-  recent.forEach((i, k) => {
-    gp[2 * k] = x[i]; gp[2 * k + 1] = y[i];
-    const c = CAT_RGB[cat[i]] || CAT_RGB[8];
-    gc.set([c[0], c[1], c[2], 60], 4 * k);
-    gr[k] = rad[i] * 3.2; gt[k] = year[i]; gv[k] = venue[i];
-  });
+  const recent = [];
+  for (let k = 0; k < n; k++) if (tMax - yf[k] <= 30 / 366) recent.push(k);
+  const g = recent.length, gp = new Float32Array(g * 2), gr = new Float32Array(g), gt = new Float32Array(g), gv = new Float32Array(g);
+  S.glowSrc = Uint32Array.from(recent);
+  recent.forEach((k, j) => { gp[2 * j] = pos[2 * k]; gp[2 * j + 1] = pos[2 * k + 1]; gr[j] = rad[k] * 3.2; gt[j] = yf[k]; gv[j] = vf[k]; });
+  S.glowColor = new Uint8Array(g * 4);
+  fillGlowColors();
   S.glowData = {length: g, attributes: {
-    getPosition: {value: gp, size: 2}, getFillColor: {value: gc, size: 4}, getRadius: {value: gr, size: 1},
+    getPosition: {value: gp, size: 2}, getFillColor: {value: S.glowColor, size: 4}, getRadius: {value: gr, size: 1},
     getFilterValue: {value: gt, size: 1}, getFilterCategory: {value: gv, size: 1}}};
+}
+
+/* point colors: by top-level topic (default) or by arXiv primary category; brightness = recency */
+function topicRGB(l0) {
+  const hex = S.meta.terrain_colors[l0 % S.meta.terrain_colors.length];
+  const c = [1, 3, 5].map((j) => parseInt(hex.slice(j, j + 2), 16));
+  return c.map((v) => Math.round(v + (255 - v) * 0.35));  // brighter than the terrain wash
+}
+
+function colorOf(i) {
+  return S.colorMode === 'cat' ? (CAT_RGB[S.cols.cat[i]] || CAT_RGB[8]) : S.topicRGB[S.cols.l0[i]];
+}
+
+function fillColors() {
+  const n = S.n, perm = S.perm, year = S.cols.year, tMin = S.tMin, span = Math.max(S.tMax - S.tMin, 1e-6);
+  S.topicRGB = [...Array(256).keys()].map(topicRGB);
+  for (let k = 0; k < n; k++) {
+    const i = perm[k], c = colorOf(i);
+    const a = 70 + 185 * Math.pow((year[i] - tMin) / span, 1.6);
+    S.colorBuf.set([c[0], c[1], c[2], S.big[k] ? a * 0.42 : a], 4 * k);
+    S.lineBuf.set([c[0], c[1], c[2], S.big[k] ? 235 : 0], 4 * k);
+  }
+}
+
+function fillGlowColors() {
+  S.glowSrc.forEach((k, j) => { const c = colorOf(S.perm[k]); S.glowColor.set([c[0], c[1], c[2], 60], 4 * j); });
+}
+
+function setColorMode(mode) {
+  S.colorMode = mode;
+  fillColors(); fillGlowColors();
+  // new attribute objects so deck.gl re-uploads only the colors
+  const at = S.pointsData.attributes;
+  S.pointsData = {...S.pointsData, attributes: {...at, getFillColor: {value: S.colorBuf, size: 4}, getLineColor: {value: S.lineBuf, size: 4}}};
+  S.glowData = {...S.glowData, attributes: {...S.glowData.attributes, getFillColor: {value: S.glowColor, size: 4}}};
+  document.querySelectorAll('#colorMode button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+  renderLegend();
+  render();
+}
+
+function renderLegend() {
+  const m = S.meta, el = $('legend');
+  if (S.colorMode === 'cat') {
+    el.className = '';
+    el.innerHTML = m.categories.slice(0, 8).map((c, i) =>
+      `<span><i style="background:rgb(${CAT_RGB[i]});color:rgb(${CAT_RGB[i]})"></i>${c}</span>`).join('');
+  } else {
+    el.className = 'topics';
+    el.innerHTML = m.labels.filter((l) => l.l === 0).sort((a, b) => b.n - a.n).map((l) => {
+      const c = S.topicRGB[l.id];
+      return `<span title="${esc(l.name)}"><i style="background:rgb(${c});color:rgb(${c})"></i>${esc(l.name)}</span>`;
+    }).join('');
+  }
 }
 
 function loadAux() {
@@ -155,8 +221,9 @@ function render() {
     }),
     new ScatterplotLayer({
       id: 'points', data: S.pointsData, radiusUnits: 'common', radiusScale, radiusMinPixels: 0.55, radiusMaxPixels: 48,
-      stroked: false, pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 230],
-      onHover: hover, onClick: (info) => { if (info.index >= 0) select(info.index); return true; },
+      stroked: true, lineWidthUnits: 'pixels', lineWidthMinPixels: 0, pickable: true, autoHighlight: true, highlightColor: [255, 255, 255, 230],
+      onHover: (info) => hover(info.index >= 0 ? {...info, index: S.perm[info.index]} : info),
+      onClick: (info) => { if (info.index >= 0) select(S.perm[info.index]); return true; },
       ...filter,
     }),
     new LineLayer({
@@ -438,9 +505,9 @@ function initControls() {
   $('vNone').onclick = () => setAll(false);
   S.venueList = [...S.venues];
 
-  $('legend').innerHTML = m.categories.slice(0, 8).map((c, i) =>
-    `<span><i style="background:rgb(${CAT_RGB[i]});color:rgb(${CAT_RGB[i]})"></i>${c}</span>`).join('');
-  $('stats').textContent = `${S.n.toLocaleString('en-US')} papers · ${PROFILE.toUpperCase()} · ${m.edges.toLocaleString('en-US')} citation links`;
+  renderLegend();
+  document.querySelectorAll('#colorMode button').forEach((b) => { b.onclick = () => setColorMode(b.dataset.mode); });
+  $('stats').textContent = `${S.n.toLocaleString('en-US')} papers · ${m.edges.toLocaleString('en-US')} citation links`;
   $('citeNote').textContent = m.citations_ready < 0.99
     ? `Citation counts are ${(m.citations_ready * 100).toFixed(0)}% loaded (papers without data are drawn at minimum size).` : '';
   $('q').oninput = onSearch;
