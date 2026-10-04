@@ -1,6 +1,6 @@
 /* ML Paper Atlas — static deck.gl app (no build step, loaded from CDN).
- * Data: data/<profile>/{meta.json, points.bin, aux.bin, terrain.png, cards/, edges/, search/, ids/}
- * URL params: ?paper=<arXiv id>, ?q=<query>[&focus=1], ?top=<pct>, ?hot=<pct> (?profile= picks another exported map)
+ * Data: data/map/{meta.json, points.bin, aux.bin, terrain.png, cards/, edges/, search/, authors/, names/, ids/}
+ * URL params: ?paper=<arXiv id>, ?q=<query>[&focus=1], ?top=<pct>, ?hot=<pct>, ?panel=0
  *
  * Performance notes: layer data objects and extensions are created once and reused, so a
  * view change only updates uniforms (re-creating them per frame re-uploads 600k+ points).
@@ -9,8 +9,7 @@
 const {Deck, OrthographicView, ScatterplotLayer, TextLayer, LineLayer, BitmapLayer, LinearInterpolator,
   DataFilterExtension} = deck;
 
-const PROFILE = new URLSearchParams(location.search).get('profile') || 'm2';
-const BASE = `data/${PROFILE}/`;
+const BASE = 'data/map/';
 const CAT_RGB = [[91, 192, 235], [253, 231, 76], [155, 197, 61], [229, 89, 52], [250, 121, 33],
   [193, 123, 224], [242, 95, 156], [61, 218, 180], [150, 150, 150]];
 // map labels: a clean, legible sans in sentence case; size and weight step down with depth
@@ -729,7 +728,7 @@ function initControls() {
   $('q').oninput = onSearch;
   const lastDay = new Date(Date.UTC(1990, 0, 1) + m.t_range_days[1] * 864e5).toISOString().slice(0, 10);
   $('dataAsOf').textContent = `through ${lastDay}`;
-  $('topicNote').textContent = m.labels.filter((l) => l.l === 0).length === 13 && PROFILE === 'm2'
+  $('topicNote').textContent = m.labels.filter((l) => l.l === 0).length === 13
     ? 'Topics: HDBSCAN clusters grouped into 13 research fields.'
     : 'Topics: HDBSCAN clusters grouped by similarity.';
   const setPanel = (open) => {
