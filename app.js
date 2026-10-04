@@ -363,7 +363,7 @@ async function select(i) {
   for (let l = 0; l < m.levels; l++) {
     const id = aux[`l${l}`][i];
     const lab = m.labels.find((x) => x.l === l && x.id === id);
-    if (lab) path.push(esc(lab.name));
+    if (lab && path[path.length - 1] !== esc(lab.name)) path.push(esc(lab.name));  // unsplit levels repeat the parent's name
   }
   $('cardBody').innerHTML = `
     <h3>${esc(c.title)}</h3>
